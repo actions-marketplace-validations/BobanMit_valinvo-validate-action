@@ -62,8 +62,8 @@ The rule set is detected from each document:
 For a PDF, the invoice XML attached to it (`factur-x.xml`, `zugferd-invoice.xml` or `xrechnung.xml`) is checked
 against the rules of its format, the PDF against PDF/A-3 (veraPDF; rule IDs like `PDF/A-3 6.2.11.4.1-1`) and its
 XMP metadata against the XML (rule IDs `ZF-XMP-…`). The rule set then names both, e.g.
-`zugferd-2.5.2-en16931+pdf-a-3u`. Annotations on a PDF have no line number; the location is the XPath in the
-embedded XML.
+`zugferd-2.5.2-en16931+pdf-a-3u`. Annotations on a PDF aren't placed on a line of the PDF file; the message names the line and
+XPath in the embedded XML.
 
 A ZUGFeRD / Factur-X invoice without a delivery date (BT-72) or delivery party gets one warning,
 `PEPPOL-EN16931-R008` (empty `ApplicableHeaderTradeDelivery`): the ZUGFeRD schema requires that element even
@@ -71,8 +71,8 @@ when there is nothing to put in it, and FeRD's rules warn about any empty elemen
 If you set `fail-on-warnings: true`, add a delivery date to such invoices.
 
 Files that are not one of these (for example a `pom.xml` caught by a broad pattern, or a PDF without an embedded
-invoice) are reported as *not checked* and fail the step, so point `files` at your invoices only. Not supported
-yet: the French profile EXTENDED-CTC-FR and ZUGFeRD 1.0.
+invoice) are reported as *not checked* and fail the step, so point `files` at your invoices only. Not supported:
+ZUGFeRD 1.0.
 
 ## Inputs
 
@@ -97,7 +97,7 @@ yet: the French profile EXTENDED-CTC-FR and ZUGFeRD 1.0.
 Each error becomes an annotation on the file:
 
 ```
-::error file=examples/invalid/xrechnung-missing-fields.xml,title=BR-DE-15::Das Element "Buyer reference" (BT-10) muss übermittelt werden. (at /*:Invoice[1])
+::error file=examples/invalid/xrechnung-missing-fields.xml,line=2,col=324,title=BR-DE-15::Das Element "Buyer reference" (BT-10) muss übermittelt werden.
 ```
 
 The job summary lists every file with its rule set, result and number of errors and warnings, and the errors

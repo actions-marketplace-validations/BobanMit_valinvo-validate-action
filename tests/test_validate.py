@@ -18,8 +18,8 @@ VALID = {"ruleSet": "peppol-bis-3.0.21-ubl-invoice", "valid": True, "errors": []
 INVALID = {
     "ruleSet": "xrechnung-3.0.2-ubl-invoice", "valid": False,
     "errors": [
-        {"rule": "BR-DE-15", "message": "Das Element \"Buyer reference\" (BT-10) muss übermittelt werden.", "location": "/:Invoice[1]"},
-        {"message": "cvc-complex-type.2.4.a: Invalid content, expected cbc:ID", "location": "invoice.xml(12:5)"},
+        {"rule": "BR-DE-15", "message": "Das Element \"Buyer reference\" (BT-10) muss übermittelt werden.", "location": "/:Invoice[1]", "line": 2, "column": 75},
+        {"message": "cvc-complex-type.2.4.a: Invalid content, expected cbc:ID", "location": "invoice.xml", "line": 12, "column": 5},
     ],
     "warnings": [{"rule": "PEPPOL-EN16931-R002", "message": "No more than one note, 100%, a:b", "location": "/:Invoice[1]/cbc:Note[2]"}],
 }
@@ -119,8 +119,8 @@ class ActionTest(unittest.TestCase):
     def test_errors_become_annotations_and_fail_the_step(self):
         code, log = self.run_action(FakeApi(INVALID, VALID))
         self.assertEqual(1, code)
-        self.assertIn("::error file=invoices/a.xml,title=BR-DE-15::Das Element \"Buyer reference\" (BT-10) muss übermittelt werden. (at /:Invoice[1])", log)
-        # Schema errors point at their line and column.
+        self.assertIn("::error file=invoices/a.xml,line=2,col=75,title=BR-DE-15::Das Element \"Buyer reference\" (BT-10) muss übermittelt werden.", log)
+        # Schema errors too.
         self.assertIn("::error file=invoices/a.xml,line=12,col=5,title=XML schema::cvc-complex-type.2.4.a: Invalid content, expected cbc:ID", log)
         # Workflow-command escaping: % in data, ':' and ',' in properties.
         self.assertIn("::warning file=invoices/a.xml,title=PEPPOL-EN16931-R002::No more than one note, 100%25, a:b (at /:Invoice[1]/cbc:Note[2])", log)
@@ -199,11 +199,21 @@ class ActionTest(unittest.TestCase):
 
     def test_locations_are_shortened_and_meaningless_ones_dropped(self):
         xpath = "/*:Invoice[namespace-uri()='urn:oasis:names:specification:ubl:schema:xsd:Invoice-2'][1]/*:Note[namespace-uri()='urn:x'][2]"
-        self.assertEqual("/*:Invoice[1]/*:Note[2]", validate.readable_location(xpath))
-        self.assertIsNone(validate.readable_location("invoice.xml"), "the API's internal file name means nothing to the user")
-        self.assertEqual("invoice.xml(3:7)", validate.readable_location("invoice.xml(3:7)"))
+        self.assertEqual("/*:Invoice[1]/*:Note[2]", validate.readable_location({"location": xpath}))
+        self.assertEqual("line 3, column 7: /*:Invoice[1]/*:Note[2]", validate.readable_location({"location": xpath, "line": 3, "column": 7}))
+        self.assertIsNone(validate.readable_location({"location": "invoice.xml"}), "the API's internal file name means nothing to the user")
+        self.assertEqual("line 3, column 7", validate.readable_location({"location": "invoice.xml", "line": 3, "column": 7}))
         issue = {"message": "cvc-complex-type.2.4.a: Invalid content", "location": "invoice.xml"}
         self.assertEqual("::error file=a.xml,title=XML schema::cvc-complex-type.2.4.a: Invalid content", validate.annotation("error", "a.xml", issue))
+
+    def test_a_pdf_gets_no_line_annotation_but_names_the_line_in_its_xml(self):
+        issue = {"rule": "BR-1", "message": "Wrong", "location": "/:Invoice[1]", "line": 3, "column": 7}
+        self.assertEqual("::error file=a.PDF,title=BR-1::Wrong (at line 3, column 7: /:Invoice[1])", validate.annotation("error", "a.PDF", issue))
+        self.assertEqual("::error file=a.xml,line=3,col=7,title=BR-1::Wrong", validate.annotation("error", "a.xml", issue))
+
+    def test_english_explanation_follows_the_official_message(self):
+        issue = {"rule": "BR-DE-15", "message": "Muss.", "explanation": "Required.", "line": 3, "column": 7}
+        self.assertEqual("::error file=a.xml,line=3,col=7,title=BR-DE-15::Muss. (Required.)", validate.annotation("error", "a.xml", issue))
 
     def test_summary_cells_cannot_break_the_table_or_inject_html(self):
         self.assertEqual("a \\| b &lt;script&gt; c", validate.cell("a | b <script>\n c"))

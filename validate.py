@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
 VERSION = "1.0.0"
 USER_AGENT = "valinvo-github-action/" + VERSION
@@ -131,10 +131,11 @@ def validate_file(path: str, settings: Settings, opener: Callable, sleep: Callab
             with opener(request, timeout=120) as response:
                 return Outcome(path, report=json.loads(response.read().decode("utf-8")))
         except urllib.error.HTTPError as e:
-            if e.code in (429, 503) and attempt < MAX_ATTEMPTS:
-                sleep(retry_after(e.headers))
-                continue
-            return Outcome(path, failure=describe_http_error(e.code, e.read()))
+            with e:
+                if e.code in (429, 503) and attempt < MAX_ATTEMPTS:
+                    sleep(retry_after(e.headers))
+                    continue
+                return Outcome(path, failure=describe_http_error(e.code, e.read()))
         except (urllib.error.URLError, OSError, ValueError) as e:
             if attempt < MAX_ATTEMPTS and not isinstance(e, ValueError):
                 sleep(min(2 ** attempt, MAX_WAIT_SECONDS))
@@ -154,30 +155,39 @@ def escape_property(text: str) -> str:
     return escape_data(text).replace(":", "%3A").replace(",", "%2C")
 
 
-def line_and_column(location: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
-    """Schema errors carry a line/column location; rule errors an XPath (no line)."""
-    match = re.search(r"(\d+):(\d+)\)?\s*$", location or "")
-    return (int(match.group(1)), int(match.group(2))) if match else (None, None)
-
-
-def readable_location(location: Optional[str]) -> Optional[str]:
-    """An XPath without its namespace filters, or a line/column; None for anything else (e.g. the API's own file name)."""
-    if not location:
+def xpath(issue: dict) -> Optional[str]:
+    """The XPath without its namespace filters; None for anything else (e.g. the API's own file name)."""
+    location = issue.get("location")
+    if not location or not location.startswith("/"):
         return None
-    if location.startswith("/"):
-        return re.sub(r"\[namespace-uri\(\)='[^']*'\]", "", location)
-    return location if line_and_column(location)[0] is not None else None
+    return re.sub(r"\[namespace-uri\(\)='[^']*'\]", "", location)
+
+
+def readable_location(issue: dict) -> Optional[str]:
+    line = issue.get("line")
+    position = "line {}, column {}".format(line, issue.get("column")) if line else None
+    return ": ".join(part for part in (position, xpath(issue)) if part) or None
+
+
+def with_explanation(issue: dict) -> str:
+    """The official message, plus our English when it exists only in German."""
+    explanation = issue.get("explanation")
+    message = issue.get("message", "")
+    return "{} ({})".format(message, explanation) if explanation else message
 
 
 def annotation(kind: str, path: str, issue: dict) -> str:
     rule = issue.get("rule") or "XML schema"
-    location = readable_location(issue.get("location"))
-    line, column = line_and_column(location)
+    location = xpath(issue)
+    # The line of a PDF's embedded XML means nothing in the PDF file itself, so it stays in the message.
+    line = None if path.lower().endswith(".pdf") else issue.get("line")
     properties = "file=" + escape_property(path)
-    if line is not None:
-        properties += ",line={},col={}".format(line, column)
+    if line:
+        properties += ",line={},col={}".format(line, issue.get("column"))
+    elif issue.get("line"):
+        location = readable_location(issue)
     properties += ",title=" + escape_property(rule)
-    message = issue.get("message", "")
+    message = with_explanation(issue)
     if location and line is None:
         message += " (at " + location + ")"
     return "::{} {}::{}".format(kind, properties, escape_data(message))
@@ -211,7 +221,7 @@ def summary(outcomes: List[Outcome]) -> str:
             lines += ["", "<details><summary><code>{}</code>: {} error(s), {} warning(s)</summary>".format(cell(o.path), len(o.errors), len(o.warnings)), "",
                       "| | Rule | Message | Location |", "|---|---|---|---|"]
             for kind, issue in issues[:ISSUES_PER_FILE_IN_SUMMARY]:
-                lines.append("| {} | `{}` | {} | {} |".format(kind, cell(issue.get("rule") or "XML schema"), cell(issue.get("message", "")), cell(readable_location(issue.get("location")) or "")))
+                lines.append("| {} | `{}` | {} | {} |".format(kind, cell(issue.get("rule") or "XML schema"), cell(with_explanation(issue)), cell(readable_location(issue) or "")))
             if len(issues) > ISSUES_PER_FILE_IN_SUMMARY:
                 lines.append("")
                 lines.append("…and {} more in the step log.".format(len(issues) - ISSUES_PER_FILE_IN_SUMMARY))
